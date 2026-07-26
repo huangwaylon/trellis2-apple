@@ -371,12 +371,20 @@ def to_glb(
     metallic = np.clip(attrs[..., attr_layout['metallic']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
     roughness = np.clip(attrs[..., attr_layout['roughness']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
     alpha = np.clip(attrs[..., attr_layout['alpha']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
-    # Auto-detect transparency from baked alpha values
+    # Auto-detect transparency from baked alpha values.
+    # The naive "any texel < 250 -> BLEND" test is fragile on Apple Silicon:
+    # bf16 numerical drift leaves sub-1.0 alpha on texels that are NOT
+    # semantically transparent, flipping solid meshes to BLEND and producing
+    # see-through artifacts on opaque geometry (upstream PR #1). Instead require
+    # a MEANINGFUL FRACTION of valid texels to be clearly transparent.
     alpha_valid = alpha[mask]
-    if alpha_valid.size > 0 and alpha_valid.min() < 250:
+    _ALPHA_THRESH = 128   # a texel is "transparent" only well below opaque
+    _FRAC_THRESH = 0.01   # need >1% of texels transparent to call it BLEND
+    if alpha_valid.size > 0 and float((alpha_valid < _ALPHA_THRESH).mean()) > _FRAC_THRESH:
         alpha_mode = 'BLEND'
         if verbose:
-            print(f"Detected transparency (alpha min={alpha_valid.min()}), using BLEND mode")
+            frac = float((alpha_valid < _ALPHA_THRESH).mean())
+            print(f"Detected transparency ({frac*100:.1f}% texels < {_ALPHA_THRESH}), using BLEND mode")
     else:
         alpha_mode = 'OPAQUE'
     

@@ -227,3 +227,8 @@ debug_*.py
 # Gradio cache
 gradio_cache/
 gradio_cache_test/
+
+# Generated meshes / intermediates (regenerable, large)
+output_*.glb
+output_*.obj
+*.pt

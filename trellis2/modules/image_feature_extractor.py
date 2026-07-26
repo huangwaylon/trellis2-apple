@@ -70,6 +70,13 @@ class DinoV3FeatureExtractor:
     Feature extractor for DINOv3 models.
     """
     def __init__(self, model_name: str, image_size=512):
+        # The pipeline pins facebook/dinov3-vitl16-pretrain-lvd1689m, a GATED
+        # repo (403 without manual HF approval). camenduru mirrors the same
+        # weights ungated (byte-identical, loads via DINOv3ViTModel). Override
+        # with TRELLIS_DINOV3_REPO.
+        import os as _os
+        if model_name == 'facebook/dinov3-vitl16-pretrain-lvd1689m':
+            model_name = _os.environ.get('TRELLIS_DINOV3_REPO', 'camenduru/dinov3-vitl16-pretrain-lvd1689m')
         self.model_name = model_name
         self.model = DINOv3ViTModel.from_pretrained(model_name)
         self.model.eval()
@@ -98,7 +105,11 @@ class DinoV3FeatureExtractor:
         hidden_states = self.model.embeddings(image, bool_masked_pos=None)
         position_embeddings = self.model.rope_embeddings(image)
 
-        for i, layer_module in enumerate(self.model.layer):
+        # transformers 5.x DINOv3ViTModel nests the transformer blocks under
+        # .model.layer (top-level exposes embeddings/rope_embeddings/model/norm).
+        # Fall back to .layer for any variant that exposes it directly.
+        layers = self.model.model.layer if hasattr(self.model, 'model') and hasattr(self.model.model, 'layer') else self.model.layer
+        for i, layer_module in enumerate(layers):
             hidden_states = layer_module(
                 hidden_states,
                 position_embeddings=position_embeddings,

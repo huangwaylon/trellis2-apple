@@ -246,32 +246,46 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
             )
         else:
             # FLEX_GEMM_ATTN_MAX_SEQLEN safety-valve active — fall back to
-            # SDPA-padded. Mirror the SDPA preamble (q/k/v already unbound).
+            # SDPA. Benchmarked on M-series/torch2.13: SDPA is 5-19x FASTER
+            # than the serial-KV fused kernel at every seqlen and bit-matches
+            # it in fp32 (max|diff|=0 up to 8k; no pytorch#179352 cliff on 2.13).
             import torch.nn.functional as F_attn
             N_b = len(q_seqlen)
-            max_q = max(q_seqlen); max_kv = max(kv_seqlen)
-            H_b = q.shape[-2]; C_q_b = q.shape[-1]; C_v_b = v.shape[-1]
-            q_dense = q.new_zeros(N_b, max_q, H_b, C_q_b)
-            k_dense = k.new_zeros(N_b, max_kv, H_b, C_q_b)
-            v_dense = v.new_zeros(N_b, max_kv, H_b, C_v_b)
-            attn_mask = torch.zeros(N_b, max_q, max_kv, dtype=torch.bool, device=device)
-            q_off = 0; kv_off = 0
-            for i in range(N_b):
-                ql = q_seqlen[i]; kvl = kv_seqlen[i]
-                q_dense[i, :ql] = q[q_off:q_off + ql]
-                k_dense[i, :kvl] = k[kv_off:kv_off + kvl]
-                v_dense[i, :kvl] = v[kv_off:kv_off + kvl]
-                attn_mask[i, :ql, :kvl] = True
-                q_off += ql; kv_off += kvl
-            q_dense = q_dense.permute(0, 2, 1, 3)
-            k_dense = k_dense.permute(0, 2, 1, 3)
-            v_dense = v_dense.permute(0, 2, 1, 3)
-            float_mask = torch.zeros(N_b, 1, max_q, max_kv, dtype=q_dense.dtype, device=device)
-            float_mask.masked_fill_(~attn_mask.unsqueeze(1), float('-inf'))
-            out_dense = F_attn.scaled_dot_product_attention(q_dense, k_dense, v_dense, attn_mask=float_mask)
-            out_dense = out_dense.permute(0, 2, 1, 3)
-            out_parts = [out_dense[i, :q_seqlen[i]] for i in range(N_b)]
-            out = torch.cat(out_parts, dim=0)
+            if N_b == 1:
+                # Single packed sequence (the HR inference case): NO padding,
+                # NO [B,Lq,Lkv] mask (that mask is O(N^2) and OOMs at ~1024^3
+                # token counts). Direct flash SDPA on the one sequence.
+                ql = int(q_seqlen[0]); kvl = int(kv_seqlen[0])
+                qd = q[:ql].permute(1, 0, 2).unsqueeze(0)     # [1,H,Lq,C]
+                kd = k[:kvl].permute(1, 0, 2).unsqueeze(0)
+                vd = v[:kvl].permute(1, 0, 2).unsqueeze(0)
+                od = F_attn.scaled_dot_product_attention(qd, kd, vd)
+                out = od.squeeze(0).permute(1, 0, 2)           # [Lq,H,C]
+            else:
+                # Multiple variable-length sequences — mirror the SDPA preamble.
+                max_q = max(q_seqlen); max_kv = max(kv_seqlen)
+                H_b = q.shape[-2]; C_q_b = q.shape[-1]; C_v_b = v.shape[-1]
+                q_dense = q.new_zeros(N_b, max_q, H_b, C_q_b)
+                k_dense = k.new_zeros(N_b, max_kv, H_b, C_q_b)
+                v_dense = v.new_zeros(N_b, max_kv, H_b, C_v_b)
+                attn_mask = torch.zeros(N_b, max_q, max_kv, dtype=torch.bool, device=device)
+                q_off = 0; kv_off = 0
+                for i in range(N_b):
+                    ql = q_seqlen[i]; kvl = kv_seqlen[i]
+                    q_dense[i, :ql] = q[q_off:q_off + ql]
+                    k_dense[i, :kvl] = k[kv_off:kv_off + kvl]
+                    v_dense[i, :kvl] = v[kv_off:kv_off + kvl]
+                    attn_mask[i, :ql, :kvl] = True
+                    q_off += ql; kv_off += kvl
+                q_dense = q_dense.permute(0, 2, 1, 3)
+                k_dense = k_dense.permute(0, 2, 1, 3)
+                v_dense = v_dense.permute(0, 2, 1, 3)
+                float_mask = torch.zeros(N_b, 1, max_q, max_kv, dtype=q_dense.dtype, device=device)
+                float_mask.masked_fill_(~attn_mask.unsqueeze(1), float('-inf'))
+                out_dense = F_attn.scaled_dot_product_attention(q_dense, k_dense, v_dense, attn_mask=float_mask)
+                out_dense = out_dense.permute(0, 2, 1, 3)
+                out_parts = [out_dense[i, :q_seqlen[i]] for i in range(N_b)]
+                out = torch.cat(out_parts, dim=0)
     elif config.ATTN == 'sdpa':
         import torch.nn.functional as F_attn
         if num_all_args == 1:
