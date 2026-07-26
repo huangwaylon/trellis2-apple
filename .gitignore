@@ -232,3 +232,7 @@ gradio_cache_test/
 output_*.glb
 output_*.obj
 *.pt
+
+# Game-ready pipeline work/output (regenerable, large)
+gameready_work/
+gameready_out/
