@@ -79,12 +79,26 @@ transformers 5.14 nests blocks under `.model.layer` (top-level exposes
 `embeddings`/`rope_embeddings`/`model`/`norm`), so `extract_features` uses
 `self.model.model.layer`. — `trellis2/modules/image_feature_extractor.py`
 
-### 3.3 Opaque meshes exported as see-through BLEND (upstream PR #1)
-`to_glb` chose `alphaMode='BLEND'` if **any** texel had `alpha < 250`. bf16
-drift leaves sub-1.0 alpha on opaque texels → solid meshes render see-through.
-Fixed to a fraction test: BLEND only if **>1 % of texels are < 128**, else
-OPAQUE. Correctly keeps jeep OPAQUE (0.65 % drift) while flagging kei BLEND
-(3 % real glass). — `o-voxel/o_voxel/postprocess.py`
+### 3.3 See-through mesh / "inconsistent normals" — was the BLEND material
+- **Symptom:** orbiting the kei car, the surface reads as see-through — you look
+  *into* the interior through the body, as if normals were flipped/random.
+- **Not the geometry:** kei's winding disagreement is 0.019% (as clean as
+  jeep's), vertex normals are present, and a from-outside ray test hits a
+  **front-facing** triangle first on **100%** of rays (0% back-facing). The
+  exterior shell is consistently outward-oriented.
+- **Cause:** the model predicts ~4% low-alpha voxels on kei (its glass), so the
+  auto-detector set the single PBR material to `alphaMode='BLEND'`. In glTF a
+  BLEND material **does not write the depth buffer** — so the *entire* surface
+  (including the 96% fully-opaque body) stops occluding, and back/interior
+  geometry shows through. jeep stayed OPAQUE → writes depth → solid.
+- **Fix:** default `alpha_mode='OPAQUE'` (matches upstream TRELLIS.2, which
+  keeps alpha in the texture but inactive). `to_glb` gains an `alpha_mode`
+  param (`OPAQUE`|`BLEND`|`MASK`|`auto`); `generate_mps.py --alpha-mode`
+  defaults to `opaque`. Result: kei renders solid, geometry unchanged.
+- Related bf16 note: even the old "any texel <250 → BLEND" heuristic (upstream
+  PR #1) wrongly flipped solid meshes to BLEND from drift; `auto` now needs
+  >1% of texels <128. But BLEND itself is the see-through trigger, so OPAQUE is
+  the default regardless. — `o-voxel/o_voxel/postprocess.py`
 
 ### 3.4 `--load-intermediate` broken on torch ≥2.6
 `torch.load` now defaults `weights_only=True`, rejecting the layout dict's
@@ -120,11 +134,11 @@ Final deliverables (`1024_cascade`, tex 2048, `remesh_project=0`, `cc<50`):
 | | faces | open boundary | non-manifold | winding | comps | alpha |
 |---|---|---|---|---|---|---|
 | jeep | 932 K | **0.011 %** | 0.247 % | 0.020 % | 124 | OPAQUE |
-| kei  | 981 K | 0.126 % | 0.168 % | 0.021 % | 105 | BLEND (glass) |
+| kei  | 981 K | 0.126 % | 0.168 % | 0.019 % | 106 | OPAQUE |
 
 Reference (trellis-mac jeep @1024): ~0.15 % boundary, ~0.6 % non-manifold.
 kei's higher boundary is genuine open thin-surface geometry (glass), not a
-defect.
+defect; it renders solid in OPAQUE mode (§3.3).
 
 ## 5. Experiments
 
@@ -164,7 +178,10 @@ preserves per-vertex UVs.
 - **Pre-decimate to 300 K before bake** (trellis-mac) — sacrifices detail;
   full-res native remesh survives here, so we skip it.
 - **`remesh_project` 0.3/0.9** — worse topology (§5.1).
-- **Force OPAQUE always** — would make kei's glass solid; auto-detect instead.
+- **Auto-detect alphaMode (BLEND on glass)** — BLEND disables whole-mesh
+  depth-write → see-through (§3.3); default OPAQUE, BLEND opt-in.
+- **`alphaMode=MASK` for kei glass** — alpha-cutout would punch holes at the
+  windows (not watertight) and speckle where drift dips below the cutoff.
 
 ## 7. `generate_mps.py` reference
 
@@ -173,6 +190,7 @@ preserves per-vertex UVs.
 | `--pipeline-type` | `1024_cascade` | `512` / `1024` / `1024_cascade` / `1536_cascade` |
 | `--texture-size` | 2048 | 512–4096 |
 | `--remesh-project` | 0.0 | keep 0 (§5.1) |
+| `--alpha-mode` | `opaque` | `opaque`/`blend`/`mask`/`auto`; BLEND renders see-through (§3.3) |
 | `--min-component-faces` | 0 | recommend 50 (§5.2) |
 | `--unify-winding` | off | majority-vote winding pass (rarely needed: <0.03%) |
 | `--save-intermediate` / `--load-intermediate` | — | decouple ~10 min sample+decode from ~4 min bake |

@@ -130,6 +130,10 @@ def main():
     ap.add_argument("--decimation-target", type=int, default=1_000_000)
     ap.add_argument("--remesh-project", type=float, default=0.0,
                     help="0=README/CUDA-example default; >0 snaps remeshed verts back to surface")
+    ap.add_argument("--alpha-mode", default="opaque", choices=["opaque", "blend", "mask", "auto"],
+                    help="GLB material alphaMode. Default 'opaque' (solid; matches upstream). "
+                         "BLEND makes the whole mesh non-depth-writing -> renders see-through; "
+                         "'auto' = BLEND only if >1%% texels transparent.")
     ap.add_argument("--no-remesh", action="store_true", help="Skip narrow-band DC remesh (NOT watertight)")
     ap.add_argument("--no-texture", action="store_true")
     ap.add_argument("--unify-winding", action="store_true",
@@ -207,6 +211,7 @@ def main():
             remesh=not args.no_remesh,
             remesh_band=1,
             remesh_project=args.remesh_project,
+            alpha_mode=args.alpha_mode.upper() if args.alpha_mode != "auto" else "auto",
             verbose=True,
         )
         if args.unify_winding:

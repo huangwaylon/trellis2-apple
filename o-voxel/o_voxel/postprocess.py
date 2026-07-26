@@ -85,6 +85,7 @@ def to_glb(
     remesh: bool = False,
     remesh_band: float = 1,
     remesh_project: float = 0.9,
+    alpha_mode: str = 'OPAQUE',
     mesh_cluster_threshold_cone_half_angle_rad=np.radians(90.0),
     mesh_cluster_refine_iterations=0,
     mesh_cluster_global_iterations=1,
@@ -371,22 +372,24 @@ def to_glb(
     metallic = np.clip(attrs[..., attr_layout['metallic']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
     roughness = np.clip(attrs[..., attr_layout['roughness']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
     alpha = np.clip(attrs[..., attr_layout['alpha']].cpu().numpy() * 255, 0, 255).astype(np.uint8)
-    # Auto-detect transparency from baked alpha values.
-    # The naive "any texel < 250 -> BLEND" test is fragile on Apple Silicon:
-    # bf16 numerical drift leaves sub-1.0 alpha on texels that are NOT
-    # semantically transparent, flipping solid meshes to BLEND and producing
-    # see-through artifacts on opaque geometry (upstream PR #1). Instead require
-    # a MEANINGFUL FRACTION of valid texels to be clearly transparent.
+    # Alpha mode. Default OPAQUE (matches upstream TRELLIS.2, which preserves
+    # alpha in the texture but leaves it inactive). BLEND is deliberately NOT
+    # the default: a single-material mesh set to BLEND stops writing the depth
+    # buffer for the WHOLE surface, so even fully-opaque body faces no longer
+    # occlude and the mesh renders see-through / reveals its interior when
+    # orbited. 'auto' = fraction heuristic (BLEND only if >1% of texels <128,
+    # which is bf16-drift-robust); 'OPAQUE'/'BLEND'/'MASK' force the mode.
     alpha_valid = alpha[mask]
-    _ALPHA_THRESH = 128   # a texel is "transparent" only well below opaque
-    _FRAC_THRESH = 0.01   # need >1% of texels transparent to call it BLEND
-    if alpha_valid.size > 0 and float((alpha_valid < _ALPHA_THRESH).mean()) > _FRAC_THRESH:
-        alpha_mode = 'BLEND'
-        if verbose:
-            frac = float((alpha_valid < _ALPHA_THRESH).mean())
-            print(f"Detected transparency ({frac*100:.1f}% texels < {_ALPHA_THRESH}), using BLEND mode")
-    else:
-        alpha_mode = 'OPAQUE'
+    if alpha_mode == 'auto':
+        _ALPHA_THRESH = 128
+        _FRAC_THRESH = 0.01
+        if alpha_valid.size > 0 and float((alpha_valid < _ALPHA_THRESH).mean()) > _FRAC_THRESH:
+            alpha_mode = 'BLEND'
+        else:
+            alpha_mode = 'OPAQUE'
+    if verbose:
+        frac = float((alpha_valid < 128).mean()) if alpha_valid.size > 0 else 0.0
+        print(f"alphaMode={alpha_mode} ({frac*100:.1f}% texels <128)")
     
     # Inpainting: fill gaps (dilation) to prevent black seams at UV boundaries
     mask_inv = (~mask).astype(np.uint8)
