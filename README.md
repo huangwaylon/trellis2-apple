@@ -17,7 +17,26 @@ https://github.com/user-attachments/assets/63b43a7e-acc7-4c81-a900-6da450527d8f
 
 ## 🍎 Apple Silicon Fork
 
-This fork adds an **MLX backend** for native Apple Silicon (M-series) inference, with Metal GPU acceleration for mesh postprocessing via `mtldiffrast`, `cumesh`, and `flex_gemm`. The original CUDA pipeline is fully preserved. See `mlx_backend/` for details and `requirements_macos.txt` for macOS dependencies.
+This fork runs TRELLIS.2 natively on Apple Silicon (M-series) with two compute
+paths, sharing the same Metal mesh-export stack (`mtldiffrast`, `cumesh`,
+`mtlbvh`, `flex_gemm`). The original CUDA pipeline is fully preserved.
+
+- **PyTorch-MPS** (recommended for best mesh quality) — runs the original
+  `trellis2/` pipeline on MPS. Produces near-watertight, CUDA-comparable GLBs
+  (jeep @1024_cascade: 0.011% open boundary, ~13 min on an M5 Max).
+
+  ```sh
+  bash setup_mac.sh && source .venv/bin/activate
+  python generate_mps.py assets/jeep.png --pipeline-type 1024_cascade \
+         --texture-size 2048 --min-component-faces 50 --output out
+  ```
+
+  Full setup, findings, tuning, and known issues: **[docs/APPLE_SILICON.md](docs/APPLE_SILICON.md)**.
+
+- **MLX backend** — the DiTs/VAE reimplemented in MLX (`mlx_backend/`,
+  `app_mlx.py`, `api_server.py`).
+
+See `requirements_macos.txt` for macOS dependencies.
 
 ## ✨ Features
 
