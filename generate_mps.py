@@ -91,6 +91,34 @@ def _watchdog_help():
     )
 
 
+def drop_small_components(g, min_faces):
+    """Remove connected components smaller than `min_faces` (remesh floater
+    debris). Welds by position first (GLB verts are UV-seam-split), so a legit
+    part isn't split across seams. Preserves per-vertex UVs — trimesh remaps
+    visual.uv when unreferenced verts are dropped. Returns (faces_dropped,
+    n_components_before)."""
+    import numpy as np
+    import scipy.sparse as sp
+    import scipy.sparse.csgraph as csg
+    V = np.asarray(g.vertices); F = np.asarray(g.faces)
+    if len(F) == 0:
+        return 0, 0
+    _, inv = np.unique(np.round(V.astype(np.float64), 6), axis=0, return_inverse=True)
+    Fw = inv[F]; nV = int(inv.max()) + 1
+    r = np.concatenate([Fw[:, 0], Fw[:, 1], Fw[:, 2]])
+    c = np.concatenate([Fw[:, 1], Fw[:, 2], Fw[:, 0]])
+    A = sp.coo_matrix((np.ones(len(r)), (r, c)), shape=(nV, nV))
+    n, lab = csg.connected_components(A, directed=False)
+    fcomp = lab[Fw[:, 0]]
+    sizes = np.bincount(fcomp, minlength=n)
+    keep = sizes[fcomp] >= min_faces
+    dropped = int((~keep).sum())
+    if dropped:
+        g.update_faces(keep)
+        g.remove_unreferenced_vertices()
+    return dropped, n
+
+
 def main():
     ap = argparse.ArgumentParser(description="TRELLIS.2 image->3D on Apple Silicon (MPS)")
     ap.add_argument("image", help="Path to input image")
@@ -106,6 +134,8 @@ def main():
     ap.add_argument("--no-texture", action="store_true")
     ap.add_argument("--unify-winding", action="store_true",
                     help="Apply trellis-mac majority-vote winding pass after remesh")
+    ap.add_argument("--min-component-faces", type=int, default=0,
+                    help="Drop connected components smaller than N faces (remesh floater cleanup; 0=off)")
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--save-intermediate", default=None,
                     help="Save decoded mesh+voxels to a .pt for fast bake iteration (PR #13)")
@@ -118,7 +148,7 @@ def main():
 
     if args.load_intermediate:
         print(f"Loading intermediate: {args.load_intermediate}")
-        blob = torch.load(args.load_intermediate, map_location="cpu")
+        blob = torch.load(args.load_intermediate, map_location="cpu", weights_only=False)
     else:
         if not os.path.exists(args.image):
             print(f"Error: {args.image} not found"); sys.exit(1)
@@ -187,6 +217,16 @@ def main():
                     g.faces = unify_winding(g.vertices, g.faces)
             except Exception as e:
                 print(f"  (winding unify skipped: {e})")
+        if args.min_component_faces > 0:
+            try:
+                import trimesh as _tm
+                geoms = list(glb.geometry.values()) if isinstance(glb, _tm.Scene) else [glb]
+                for g in geoms:
+                    dropped, ncomp = drop_small_components(g, args.min_component_faces)
+                    print(f"  component cleanup: dropped {dropped} faces from {ncomp} components "
+                          f"(threshold <{args.min_component_faces} faces)")
+            except Exception as e:
+                print(f"  (component cleanup skipped: {e})")
         glb.export(glb_path)
         print(f"Saved: {glb_path}  (bake {time.time()-t_bake:.0f}s)")
     else:
