@@ -19,8 +19,10 @@ python generate_mps.py assets/jeep.png --pipeline-type 1024_cascade \
 python assess_mesh.py out.glb           # watertightness metrics
 ```
 
-`1024_cascade` (model default) ≈ **13 min** on M5 Max (8 min sample+decode,
-~4 min bake). `512` is a ~3× faster preview and already beats prior ports.
+`1024_cascade` (model default) ≈ **11–13 min** on M5 Max (8 min sample+decode,
+4–6.5 min bake). `512` is a ~3× faster preview and already beats prior ports.
+Bake time scales with remesh complexity: a single prop (jeep) bakes in ~4 min,
+a dense scene (mart2, 31.2 M-face remesh) took 6.5 min.
 
 ---
 
@@ -135,10 +137,14 @@ Final deliverables (`1024_cascade`, tex 2048, `remesh_project=0`, `cc<50`):
 |---|---|---|---|---|---|---|
 | jeep | 932 K | **0.011 %** | 0.247 % | 0.020 % | 124 | OPAQUE |
 | kei  | 981 K | 0.126 % | 0.168 % | 0.019 % | 106 | OPAQUE |
+| mart2 | 964 K | 0.046 % | 0.465 % | 0.065 % | 256 | OPAQUE |
 
 Reference (trellis-mac jeep @1024): ~0.15 % boundary, ~0.6 % non-manifold.
 kei's higher boundary is genuine open thin-surface geometry (glass), not a
-defect; it renders solid in OPAQUE mode (§3.3).
+defect; it renders solid in OPAQUE mode (§3.3). mart2 (a whole storefront, not a
+single prop) is the busiest input tried: its 31.2 M-face remesh leaves more
+non-manifold edges and a longer floater tail (911 sub-50-face components culled),
+but boundary stays near 0.
 
 ## 5. Experiments
 
@@ -193,7 +199,7 @@ preserves per-vertex UVs.
 | `--alpha-mode` | `opaque` | `opaque`/`blend`/`mask`/`auto`; BLEND renders see-through (§3.3) |
 | `--min-component-faces` | 0 | recommend 50 (§5.2) |
 | `--unify-winding` | off | majority-vote winding pass (rarely needed: <0.03%) |
-| `--save-intermediate` / `--load-intermediate` | — | decouple ~10 min sample+decode from ~4 min bake |
+| `--save-intermediate` / `--load-intermediate` | — | decouple ~10 min sample+decode from the 4–6.5 min bake |
 | `--no-remesh` / `--no-texture` | — | debug |
 
 Env (auto-set by `generate_mps.py`): `PYTORCH_ENABLE_MPS_FALLBACK=1`,

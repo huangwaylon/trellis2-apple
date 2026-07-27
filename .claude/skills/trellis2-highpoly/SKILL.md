@@ -44,10 +44,11 @@ Repo: `/Users/waylonhuang/Documents/other/trellis2-apple`
    - `--min-component-faces 50` culls tiny remesh floaters. Drop it (set 0) if the
      user wants the rawest output.
    - Add `--save-intermediate /tmp/<name>.pt` if the user may want to re-bake at a
-     different texture size later (re-bake with `--load-intermediate`, ~4 min).
+     different texture size later (re-bake with `--load-intermediate`, ~4–6.5 min).
 
-4. **Report the result.** The output is `<OUTPUT_BASENAME>.glb` (triangulated,
-   textured, watertight) plus `<OUTPUT_BASENAME>.obj`. Optionally verify quality:
+4. **Report the result.** The only output file is `<OUTPUT_BASENAME>.glb`
+   (triangulated, textured, watertight) — `generate_mps.py` does **not** write an
+   `.obj`. Optionally verify quality:
 
    ```bash
    python assess_mesh.py <OUTPUT_BASENAME>.glb
